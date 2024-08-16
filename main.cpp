@@ -4,9 +4,8 @@
 #include <vector>
 #include <barrier>
 #include <future>
+#include <getopt.h>
 
-#define THREADS 8
-#define TIME 10000
 
 template <class T>
 class Node {
@@ -99,7 +98,7 @@ long do_work(LockFreeQ<int>* q, std::barrier<>* sync, std::atomic<bool>& stop) {
     long iterations = 0;
     while (!stop) {
         if (rand_range_re(&seed, 2) == 1) {
-            q->enq((int)rand_range_re(&seed, 10000));
+            q->enq(rand_range_re(&seed, INT32_MAX));
         } else {
             q->deq();
         }
@@ -107,15 +106,41 @@ long do_work(LockFreeQ<int>* q, std::barrier<>* sync, std::atomic<bool>& stop) {
     }
     return iterations;
 }
-
-int main() {
+struct args {
+    int threads = 1;
+    int duration = 1000;
+    int init = 10000;
+};
+int main(int argc, char* argv[]) {
+    int option;
+    args arg;
+    while ((option = getopt(argc, argv, "t:d:i:"))!=-1) {
+        switch (option) {
+            case 't':
+                arg.threads = atoi(optarg);
+                break;
+            case 'd':
+                arg.duration = atoi(optarg);
+                break;
+            case 'i':
+                arg.init = atoi(optarg);
+                break;
+            default:
+                exit(1);
+        }
+    }
     LockFreeQ<int> queue;
-    std::vector<std::thread> threads(THREADS);
-    std::vector<std::future<long>> futures(THREADS);
+    std::vector<std::thread> threads(arg.threads);
+    std::vector<std::future<long>> futures(arg.threads);
     std::atomic<bool> stop = false;
-    std::barrier sync(THREADS+1);
+    std::barrier sync(arg.threads+1);
+    unsigned int seed = 0;
 
-    for (int i = 0; i < THREADS; i++) {
+    for (int i = 0; i < arg.init; i++) {
+        queue.enq(rand_range_re(&seed, INT32_MAX));
+    }
+
+    for (int i = 0; i < arg.threads; i++) {
         std::promise<long> promise;
         futures[i] = promise.get_future();
         threads[i] = std::thread([&queue, &sync, &stop, p = std::move(promise)]() mutable {
@@ -125,11 +150,11 @@ int main() {
     }
 
     sync.arrive_and_wait();
-    std::this_thread::sleep_for(std::chrono::milliseconds(TIME));
+    std::this_thread::sleep_for(std::chrono::milliseconds(arg.duration));
     stop = true;
 
     long sum = 0;
-    for (int i = 0; i < THREADS; i++) {
+    for (int i = 0; i < arg.threads; i++) {
         threads[i].join(); // Wait for the thread to finish
         sum += futures[i].get(); // Get the result from the future
     }
